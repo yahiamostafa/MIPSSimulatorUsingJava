@@ -1,20 +1,28 @@
 import java.io.*;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.Queue;
 public class Main {
 	public static int []memory;
 	public static int [] regs;
 	public static int PC;
+	public static Queue<int []> decQueue,exQueue,memQueue,wbQueue;
 	public final static int R0 = 0;
 	public static HashMap<String, Integer> opcodes;
 	public static FileWriter output;
-	public static int total_number_of_instructions ,pc_stall =-100,ex_pc=0;
-	public static boolean pc_dec=true,pc_exe=true,pc_mem=true,pc_wb=true;
+	public static int last_fetch_cycle =0,last_decode_cycle=0;
+	public static int total_number_of_instructions ,pc_stall =-100,ex_pc=0,pc_stall2=-100;
 	public static int [] decodeInput = null,executeInput = null,memoryInput = null,write_backInput = null;
 public static void main(String[] args) throws IOException {
 	init_Opcodes();
 	memory = new int[2048];
 	regs = new int [33];
+	decQueue = new LinkedList<int[]>();
+	exQueue = new LinkedList<int[]>();
+	memQueue = new LinkedList<int[]>();
+	wbQueue = new LinkedList<int[]>();
 //	regs[2] =16;
 //	regs[3] = 15;
 //	memory[1030] = 12;
@@ -151,47 +159,62 @@ public static void init_Opcodes() {
 public static void run() throws IOException {
  	for (int cycle = 1;1!=2;cycle++) {
 // 		System.out.println(PC+" "+pc_dec+" "+pc_exe+" "+pc_exe+" "+pc_mem+" "+pc_wb);
- 		if (PC >=total_number_of_instructions && !pc_dec &&!pc_exe && !pc_mem && !pc_wb)
+ 		if (PC >=total_number_of_instructions && decQueue.isEmpty() && exQueue.isEmpty() && memQueue.isEmpty() && wbQueue.isEmpty())
  			return;
  		System.out.println("At clock cycle "+cycle+" :");
  		output.write("At clock cycle "+cycle+" :\n");
 		if (cycle % 2 ==1) {
-			if (cycle>=7 && pc_wb) {
-				System.out.println("Write back input ( destRegIndex: "+write_backInput[0]+", Result :"+write_backInput[1]+", Is writing back :"+(write_backInput[2]==1)+", Will flush :"+(write_backInput[4]==1)+" )");
-				output.write("Write back input ( destRegIndex: "+write_backInput[0]+", Result :"+write_backInput[1]+", Is writing back :"+(write_backInput[2]==1)+", Will flush :"+(write_backInput[4]==1)+" )\n");
-				writeback(write_backInput[0],write_backInput[1], write_backInput[2]==1?true:false , write_backInput[3],cycle,write_backInput[4]);
-				pc_wb = false;
-			}
-			if (cycle>=5 && pc_exe ) {
-				execute(executeInput[0], executeInput[1], executeInput[2], executeInput[3], executeInput[4], executeInput[5], executeInput[6],executeInput[7],pc_dec?ex_pc:executeInput[8],cycle,false);
-				pc_exe = false;
-			}
-			if (cycle>=3 && pc_dec)
-				decode(decodeInput,cycle,false);
 			if (PC  < total_number_of_instructions) {
 				System.out.println("Input to fetch (PC : "+PC+" )");
 				output.write("Input to fetch (PC"+PC+" )\n");
-					decodeInput = fetch(PC,cycle);
+				last_fetch_cycle = cycle;
+				decQueue.add(fetch(PC,cycle));
 			}
-		}else {
-			if (cycle>=6 &&pc_mem) {
-				System.out.println("Input to Memory (Address : "+memoryInput[0]+", destreg_index: "+memoryInput[1]+", Will use the memory :"+memoryInput[2]==1+", Value will be stored in the memory: "+memoryInput[3]+", Will Write back : "+(memoryInput[4]==1)+", Will flush : "+(memoryInput[6]==1)+ " )");
-				output.write("Input to Memory (Address : "+memoryInput[0]+", destreg_index: "+memoryInput[1]+", Will use the memory :"+(memoryInput[2]==1)+", Value will be stored in the memory: "+memoryInput[3]+", Will Write back : "+(memoryInput[4]==1)+", Will flush : "+(memoryInput[6]==1)+ " )");
-				write_backInput =memory(memoryInput[0],memoryInput[1],memoryInput[2]==1?true:false,memoryInput[3],memoryInput[4]==1?true:false,memoryInput[5],cycle,memoryInput[6]);
-				pc_mem = false;
-			}
-			if (cycle>=4 && pc_exe) {
-				System.out.println("Input to Execute ( opcode: "+executeInput[0]+", rd: "+executeInput[1]+", rs: "+executeInput[2]+", rt: "+executeInput[3]+", immediate value: "+executeInput[4]+", address: "+executeInput[5]+", shamt: "+executeInput[6]+", rd_index: "+executeInput[7]+")");
-				output.write("Input to Execute ( opcode: "+executeInput[0]+", rd: "+executeInput[1]+", rs: "+executeInput[2]+", rt: "+executeInput[3]+", immediate value: "+executeInput[4]+", address: "+executeInput[5]+", shamt: "+executeInput[6]+", rd_index: "+executeInput[7]+")\n");
-				memoryInput=execute(executeInput[0], executeInput[1], executeInput[2], executeInput[3], executeInput[4], executeInput[5], executeInput[6],executeInput[7], executeInput[8],cycle,true);
-			}
-			if (pc_dec) {
-				if (executeInput!=null)
-					ex_pc = executeInput[7];
+			if (!decQueue.isEmpty() && cycle>=3) {
+				decodeInput = decQueue.peek();
+				if (!(decodeInput[1]+1 == PC && last_fetch_cycle == cycle)) {
 				System.out.println("Input to decode (PC: " +decodeInput[1]+", instruction "+Integer.toBinaryString(decodeInput[0]) +" )");
 				output.write("Input to decode (PC: " +decodeInput[1]+", instruction "+Integer.toBinaryString(decodeInput[0]) +" )\n");
-				executeInput = decode(decodeInput, cycle,true);
+				decQueue.poll();
+				last_decode_cycle = cycle;
+				exQueue.add(decode(decodeInput,cycle,true));
+				}
 			}
+			if (!exQueue.isEmpty() && cycle>=5) {
+				executeInput = exQueue.peek();
+				if (!(executeInput[8]==decodeInput[1] && last_decode_cycle ==cycle)) {
+				System.out.println("Input to Execute ( opcode: "+executeInput[0]+", rd: "+executeInput[1]+", rs: "+executeInput[2]+", rt: "+executeInput[3]+", immediate value: "+executeInput[4]+", address: "+executeInput[5]+", shamt: "+executeInput[6]+", rd_index: "+executeInput[7]+")");
+				output.write("Input to Execute ( opcode: "+executeInput[0]+", rd: "+executeInput[1]+", rs: "+executeInput[2]+", rt: "+executeInput[3]+", immediate value: "+executeInput[4]+", address: "+executeInput[5]+", shamt: "+executeInput[6]+", rd_index: "+executeInput[7]+")\n");
+				exQueue.poll();
+				memQueue.add(execute(executeInput[0], executeInput[1], executeInput[2], executeInput[3], executeInput[4], executeInput[5], executeInput[6],executeInput[7],executeInput[8],executeInput[9],cycle,true));
+				}
+				}
+			if (!wbQueue.isEmpty() && cycle>=7) {
+				write_backInput = wbQueue.poll();
+				System.out.println("Write back input ( destRegIndex: "+write_backInput[0]+", Result :"+write_backInput[1]+", Is writing back :"+(write_backInput[2]==1)+", Will flush :"+(write_backInput[4]==1)+" )");
+				output.write("Write back input ( destRegIndex: "+write_backInput[0]+", Result :"+write_backInput[1]+", Is writing back :"+(write_backInput[2]==1)+", Will flush :"+(write_backInput[4]==1)+" )\n");
+				writeback(write_backInput[0],write_backInput[1], write_backInput[2]==1?true:false , write_backInput[3],cycle,write_backInput[4]);
+			}
+		}else {
+			if (!decQueue.isEmpty()) {
+				decodeInput = decQueue.peek();
+				System.out.println("Input to decode (PC: " +decodeInput[1]+", instruction "+Integer.toBinaryString(decodeInput[0]) +" )");
+				output.write("Input to decode (PC: " +decodeInput[1]+", instruction "+Integer.toBinaryString(decodeInput[0]) +" )\n");
+				decode(decodeInput, cycle,false);
+			}
+			if (!exQueue.isEmpty() && cycle>=4) {
+				executeInput = exQueue.peek();
+				System.out.println("Input to Execute ( opcode: "+executeInput[0]+", rd: "+executeInput[1]+", rs: "+executeInput[2]+", rt: "+executeInput[3]+", immediate value: "+executeInput[4]+", address: "+executeInput[5]+", shamt: "+executeInput[6]+", rd_index: "+executeInput[7]+")");
+				output.write("Input to Execute ( opcode: "+executeInput[0]+", rd: "+executeInput[1]+", rs: "+executeInput[2]+", rt: "+executeInput[3]+", immediate value: "+executeInput[4]+", address: "+executeInput[5]+", shamt: "+executeInput[6]+", rd_index: "+executeInput[7]+")\n");
+				execute(executeInput[0], executeInput[1], executeInput[2], executeInput[3], executeInput[4], executeInput[5], executeInput[6],executeInput[7],executeInput[8],executeInput[9],cycle,false);
+			}
+			if (!memQueue.isEmpty() && cycle>=6) {
+				memoryInput = memQueue.poll();
+				System.out.println("Input to Memory (Address : "+memoryInput[0]+", destreg_index: "+memoryInput[1]+", Will use the memory :"+(memoryInput[2]==1)+", Value will be stored in the memory: "+memoryInput[3]+", Will Write back : "+(memoryInput[4]==1)+", Will flush : "+(memoryInput[6]==1)+ " )");
+				output.write("Input to Memory (Address : "+memoryInput[0]+", destreg_index: "+memoryInput[1]+", Will use the memory :"+(memoryInput[2]==1)+", Value will be stored in the memory: "+memoryInput[3]+", Will Write back : "+(memoryInput[4]==1)+", Will flush : "+(memoryInput[6]==1)+ " )\n");
+				wbQueue.add(memory(memoryInput[0],memoryInput[1],memoryInput[2]==1?true:false,memoryInput[3],memoryInput[4]==1?true:false,memoryInput[5],cycle,memoryInput[6]));
+			}
+			
 		}
 		System.out.println("_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-");
 		output.write("_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-\n");
@@ -201,18 +224,26 @@ private static int [] fetch(int pc, int CC) throws IOException {
 	if (pc>=total_number_of_instructions) {
 		return null;
 	}
-	pc_dec = true;
 	System.out.println("Fetching instruction "+(pc+1));
 	output.write("Fetching instruction "+(pc+1)+'\n');
 	PC++;
 	return new  int []{memory[pc],pc};
 }
-private static int [] decode(int [] inst , int CC , boolean even) throws IOException {
+private static int [] decode(int [] inst , int CC , boolean odd) throws IOException {
+	if (odd && pc_stall2 == inst[1]) {
+		pc_stall2 = -100;
+		System.out.println("Flushing Decoding instruction "+(inst[1]+1));
+		output.write("Flushing Decoding instruction "+(inst[1]+1)+'\n');
+		return new int [] {0,0,0,0,0,0,0,0,inst[1],1};
+	}
+	if (!odd && pc_stall2 == inst[1]) {
+		System.out.println("Flushing Decoding instruction "+(inst[1]+1));
+		output.write("Flushing Decoding instruction "+(inst[1]+1)+'\n');
+		return new int [] {0,0,0,0,0,0,0,0,inst[1],1}; 
+	}
 	System.out.println("Decoding instruction "+(inst[1]+1));
 	output.write("Decoding instruction "+(inst[1]+1)+'\n');
-	if (!even) {
-		pc_dec = false;
-		pc_exe = true;
+	if (!odd) {
 		return executeInput;
 	}
 //	System.out.println("Decoding instruction "+(inst[1]+1));
@@ -244,30 +275,24 @@ private static int [] decode(int [] inst , int CC , boolean even) throws IOExcep
 		sum-=Math.pow(2, 17);
 		imm =sum;
 	}
-	return new int  [] {opcode, rd, rs, rt, imm, address,shamt,rd_index,inst[1]};
+	return new int  [] {opcode, rd, rs, rt, imm, address,shamt,rd_index,inst[1],0};
 }
-private static  int [] execute(int opcode,int rd,int rs,int rt,int imm,int address,int shamt,int rd_index,int pc,int CC,boolean even) throws IOException {
-//	System.out.println(pc+" **************");
-	if (pc>=total_number_of_instructions ) {
-		pc_dec = false;
-		pc_exe = false;
-		return null;
-	}
-	if (even && pc_stall == pc-1) {
-		return new int [] {0,0,0,0,pc,0,1}; 
-	}
-	if (!even && pc_stall == pc-1) {
+private static  int [] execute(int opcode,int rd,int rs,int rt,int imm,int address,int shamt,int rd_index,int pc,int flush,int CC,boolean odd) throws IOException {
+	if (odd && pc_stall == pc-1 || flush ==1) {
 		pc_stall = -100;
-		return new int [] {0,0,0,0,pc,0,1}; 
+		System.out.println("Flushing Executing instruction "+(pc+1));
+		output.write("Flushing Executing instruction "+(pc+1)+'\n');
+		return new int [] {0,0,0,0,0,pc,1}; 
+	}
+	if (!odd && pc_stall == pc-1 || flush==1) {
+		System.out.println("Flushing Executing instruction "+(pc+1));
+		output.write("Flushing Executing instruction "+(pc+1)+'\n');
+		return new int [] {0,0,0,0,0,pc,1}; 
 	}
 	System.out.println("Executing instruction "+(pc+1));
 	output.write("Executing instruction "+(pc+1)+'\n');
-	if (!even) {
-		pc_exe = (pc+1 >=total_number_of_instructions|| !pc_dec)?false:true;
-//		System.out.println(pc+1+" TEST "+pc_dec+" "+pc_exe);
+	if (!odd) 
 		return memoryInput;
-	}
-	pc_mem = true;
 	int result = -1;
 	switch(opcode) {
 	case(0):result = rs + rt;return new int [] {result,rd_index,0,-1,1,pc,0};
@@ -277,7 +302,8 @@ private static  int [] execute(int opcode,int rd,int rs,int rt,int imm,int addre
 	case(4):result = (rd-rs);
 	if(result!=0) {
 		pc_stall = pc;
-		PC+=imm;
+		PC+=imm-2;
+		pc_stall2 = pc+2;
 	}
 	return new int [] {result,rd,0,-1,0,pc,0};
 	case(5):result = rs & imm;return new int [] {result,rd_index,0,-1,1,pc,0};
@@ -285,6 +311,7 @@ private static  int [] execute(int opcode,int rd,int rs,int rt,int imm,int addre
 	case(7):
 	PC = address;
 	pc_stall = pc;
+	pc_stall2 = pc+2;
 	return new int [] {result,rd,0,-1,0,pc,CC,0};
 	case(8):result = rs << shamt;return new int [] {result,rd_index,0,-1,1,pc,0};
 	case(9):result = rs >>> shamt;return new int [] {result,rd_index,0,-1,1,pc,0};
@@ -295,12 +322,13 @@ private static  int [] execute(int opcode,int rd,int rs,int rt,int imm,int addre
 }
 
 private static  int [] memory(int address,int rd_index,boolean used,int  load ,boolean will_write_back, int pc , int CC,int flush ) throws IOException {
+	if (flush ==1) {
+		System.out.println("flushing Memory instruction "+(pc+1));
+		output.write("flushing Memory instruction "+(pc+1)+'\n');
+		return new int [] {0,0,0,pc,1};
+	}
 	System.out.println("Memory instruction "+(pc+1));
 	output.write("Memory instruction "+(pc+1)+'\n');
-	if (flush ==1)
-		return new int [] {0,0,0,0,1};
-	pc_mem = (pc+1 >= total_number_of_instructions)?false:true;
-	pc_wb = true;
 	if (used) {
 	if (!(address>=1024 && address<=2047))
 		System.err.println("Address is out of bound your address should have a range from 1024 up to 2047 but your address value is "+address);
@@ -317,18 +345,19 @@ private static  int [] memory(int address,int rd_index,boolean used,int  load ,b
 }
 
 private static  void writeback(int reg,int result , boolean write_back, int pc ,int CC,int flush) throws IOException {
+	if (flush ==1) {
+		System.out.println("Flushing Writing Back instruction "+(pc+1));
+		output.write("Flushing Writing Back instruction "+(pc+1)+'\n');
+		return;
+	}
 	System.out.println("Writing Back instruction "+(pc+1));
 	output.write("Writing Back instruction "+(pc+1)+'\n');
-	if (flush ==1)
-		return;
-	pc_wb = (pc+1 >= total_number_of_instructions)?false:true;
 	if (write_back) 
 		if (reg!=0) {
 			regs[reg] = result;
 			System.out.println("Value inside register R"+reg+" changed to "+result);
 			output.write("Value inside register R"+reg+" changed to "+result+'\n');
 		}
-	
 }
 
 public static void printings() throws IOException {
@@ -341,9 +370,9 @@ public static void printings() throws IOException {
 	for (int regValue : regs) 
 		sb.append("Register R"+c++ +" ----------------- "+ Integer.toHexString(regValue)+"---------------------- "+regValue+"\n");
 	c =0;
-	sb.append("Memory Address ---------------  HexValue -----------DecimalValue\n");
+	sb.append("Memory Address ---------------  HexValue -----------DecimalValue ------------- BinaryValue\n");
 	for (int memAdd : memory)
-		sb.append("Mem["+c++ +"]" +" ----------------- "+ Integer.toHexString(memAdd)+"---------------------- "+memAdd+"\n");
+		sb.append("Mem["+c++ +"]" +" ----------------- "+ Integer.toHexString(memAdd)+"---------------------- "+memAdd+" ---------------------------"+Integer.toBinaryString(memAdd)+"\n");
 	System.out.println(sb);
 	output.write(sb.toString());
 }
